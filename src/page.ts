@@ -22,8 +22,10 @@ export async function openProgram(client: AisClient, path: string): Promise<Page
   if (target) page = await client.get(new URL(target, loader.url).href, { referer: loader.url });
   // 功能頁一定有 WebForms 表單；沒有的話多半是錯誤頁或被防火牆擋下，不要當成「沒有資料」
   if (!/<form\b/i.test(page.text)) {
+    // 有些功能在沒有資料時只回一個 alert（例如「您尚未申請抵免作業」）再導回首頁
     const message = alertMessage(page.text);
-    throw new AisError(`AIS 回傳了非預期的頁面${message ? `：${message}` : ""}（${new URL(page.url).pathname}）`, "UNEXPECTED_PAGE");
+    if (message) throw new AisError(message, "AIS_NOTICE");
+    throw new AisError(`AIS 回傳了非預期的頁面（${new URL(page.url).pathname}）`, "UNEXPECTED_PAGE");
   }
   return toPage(page.url, page.text);
 }

@@ -15,6 +15,11 @@ const runs = {
   graduation: () => client.graduation(),
   search: () => client.searchCourses({ keyword: "作業系統" }),
   syllabus: () => client.syllabus("136785734"),
+  earlyWarnings: () => client.earlyWarnings(),
+  leaves: () => client.leaves(),
+  scholarships: () => client.scholarships(),
+  scholarships1142: () => client.scholarships("1142"),
+  creditTransfer: () => client.creditTransfer(),
   syllabusByCode: () => client.syllabusByCode("B5703660", { className: "3B" }),
   ambiguous: () => client.syllabusByCode("B5703660").catch((e) => `${e.code}: ${e.message}`),
 };

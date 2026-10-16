@@ -210,6 +210,26 @@ export class AisClient {
     return features.searchCourses(this, query);
   }
 
+  /** 本學期成績預警 */
+  earlyWarnings() {
+    return features.earlyWarnings(this);
+  }
+
+  /** 請假紀錄 */
+  leaves() {
+    return features.leaves(this);
+  }
+
+  /** 獎助學金申請紀錄，預設為目前學年期 */
+  scholarships(semester?: features.Semester) {
+    return features.scholarships(this, semester);
+  }
+
+  /** 抵免申請的審核結果 */
+  creditTransfer() {
+    return features.creditTransfer(this);
+  }
+
   /** 課綱，pkno 來自 timetable() 的 slots */
   syllabus(pkno: string) {
     return features.syllabus(this, pkno);

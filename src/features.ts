@@ -465,3 +465,92 @@ export async function syllabus(client: AisClient, pkno: string): Promise<Record<
   if (!Object.keys(fields).length) throw new AisError(`找不到課綱：${pkno}`, "NOT_FOUND");
   return fields;
 }
+
+// ── 成績預警 ──────────────────────────────────────────
+
+export interface EarlyWarning {
+  code: string;
+  class: string;
+  type: string;
+  title: string;
+  credits: number | null;
+  /** 預警狀況；空字串表示沒有被預警 */
+  warning: string;
+}
+
+/** 本學期各科的成績預警 */
+export async function earlyWarnings(client: AisClient): Promise<{ semester: Semester; courses: EarlyWarning[] }> {
+  const page = await openProgram(client, "Application/GRD/GRD30/GRD3060_.aspx?progcd=STU2010");
+  const semester = Object.values(readFields(page.$)).find((v) => /^\d{3,4}$/.test(v)) ?? "";
+  const courses = parseGrid(page.$).rows.map((r) => ({
+    code: r["課號"] ?? "",
+    class: r["開課班別"] ?? "",
+    type: r["選別"] ?? "",
+    title: r["中文課名"] ?? "",
+    credits: num(r["學分"]),
+    warning: r["預警狀況"] ?? "",
+  }));
+  return { semester, courses };
+}
+
+// ── 請假紀錄 ──────────────────────────────────────────
+
+/** 從表格移除學號、姓名等每列都相同的個人欄位 */
+function withoutIdentity(grid: Grid): Grid {
+  const drop = new Set(["學號", "姓名"]);
+  return {
+    columns: grid.columns.filter((c) => !drop.has(c)),
+    rows: grid.rows.map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => !drop.has(k)))),
+  };
+}
+
+/** 請假紀錄（假單、請假類別、起訖日、天／節數與各層審核狀態），欄位依 AIS 原始表頭 */
+export async function leaves(client: AisClient): Promise<Grid> {
+  const page = await openProgram(client, "Application/SEC/SEC20/SEC2050_.aspx?progcd=SEC2050");
+  const result = await submit(client, page, { QUERY_BTN1: "查詢", "PC$PageSize": "200", "PC2$PageSize": "200" });
+  return withoutIdentity(parseGrid(result.$));
+}
+
+// ── 獎助學金 ──────────────────────────────────────────
+
+/** 某學年期的獎助學金申請紀錄，預設為目前學年期；欄位依 AIS 原始表頭 */
+export async function scholarships(client: AisClient, semester?: Semester): Promise<{ semester: Semester; applications: Grid }> {
+  const page = await openProgram(client, "Application/SGM/SGM10/SGM1080_.aspx?progcd=SGM1080");
+  const { year, term } = semester
+    ? splitSemester(semester)
+    : { year: selected(page.$, "Q_APP_AYEAR"), term: selected(page.$, "Q_APP_SMS") };
+  const result = await submit(client, page, {
+    Q_APP_AYEAR: year.padStart(3, "0"),
+    Q_APP_SMS: term,
+    QUERY_BTN1: "查詢",
+    "PC$PageSize": "200",
+    "PC2$PageSize": "200",
+  });
+  return { semester: `${year}${term}`, applications: withoutIdentity(parseGrid(result.$)) };
+}
+
+// ── 抵免結果 ──────────────────────────────────────────
+
+export interface CreditTransfer {
+  /** 是否申請過抵免 */
+  applied: boolean;
+  /** AIS 的提示，例如「您尚未申請抵免作業」 */
+  message?: string;
+  fields: Record<string, string>;
+  /** 抵免科目，欄位依 AIS 原始表頭 */
+  records: Grid;
+}
+
+/** 抵免申請的審核結果（只查詢，不會按下確認） */
+export async function creditTransfer(client: AisClient): Promise<CreditTransfer> {
+  let page;
+  try {
+    page = await openProgram(client, "Application/ENR/ENR60/ENR6070_.aspx?progcd=ENR6070");
+  } catch (e) {
+    if (e instanceof AisError && e.code === "AIS_NOTICE" && /尚未申請/.test(e.message)) {
+      return { applied: false, message: e.message.replace(/[.!]+$/, ""), fields: {}, records: { columns: [], rows: [] } };
+    }
+    throw e;
+  }
+  return { applied: true, fields: readFields(page.$), records: withoutIdentity(parseGrid(page.$)) };
+}
