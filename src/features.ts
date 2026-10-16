@@ -397,22 +397,7 @@ async function runSearch(client: AisClient, q: CourseSearchQuery) {
     .slice(1)
     .map((_, tr) => /__doPostBack\((?:'|&#39;)(DataGrid\$ctl\d+\$COSID)/.exec($(tr).html() ?? "")?.[1] ?? "")
     .get();
-  const courses = parseGrid($).rows.map((r): CourseOffering => ({
-    semester: r["學期"] ?? "",
-    code: r["課號"] ?? "",
-    title: r["課名"] ?? "",
-    department: r["開課單位"] ?? "",
-    class: r["年級班別"] ?? "",
-    teacher: r["授課老師"] ?? "",
-    teacherDepartment: r["老師單位"] ?? "",
-    allEnglish: r["全程英語"] ?? "",
-    credits: num(r["學分"]),
-    type: r["選別"] ?? "",
-    enrolled: num(r["人數"]),
-    limit: r["人數限制上／下限"] ?? "",
-    hours: num(r["時數"]),
-    term: r["期限"] ?? "",
-  }));
+  const courses = parseGrid($).rows.map(toOffering);
   const paging = readPaging($);
   const result: CourseSearchResult = {
     semester: `${year}${term}`,
@@ -426,6 +411,91 @@ async function runSearch(client: AisClient, q: CourseSearchQuery) {
 
 export async function searchCourses(client: AisClient, q: CourseSearchQuery): Promise<CourseSearchResult> {
   return (await runSearch(client, q)).result;
+}
+
+const toOffering = (r: Record<string, string>): CourseOffering => ({
+  semester: r["學期"] ?? "",
+  code: r["課號"] ?? "",
+  title: r["課名"] ?? "",
+  department: r["開課單位"] ?? "",
+  class: r["年級班別"] ?? "",
+  teacher: r["授課老師"] ?? "",
+  teacherDepartment: r["老師單位"] ?? "",
+  allEnglish: r["全程英語"] ?? "",
+  credits: num(r["學分"]),
+  type: r["選別"] ?? "",
+  enrolled: num(r["人數"]),
+  limit: r["人數限制上／下限"] ?? "",
+  hours: num(r["時數"]),
+  term: r["期限"] ?? "",
+});
+
+export interface DepartmentCoursesQuery {
+  /** 開課系所的代碼（例如 0507）或名稱（例如「資訊工程學系」） */
+  department: string;
+  /** 年級 1–9，不填為全部年級 */
+  grade?: number;
+  /** 班別，例如 A、B，不填為全部 */
+  className?: string;
+  /** 預設為目前學年期 */
+  semester?: Semester;
+}
+
+/** 依開課系所（與年級、班別）列出某學年期開的所有課 */
+export async function departmentCourses(
+  client: AisClient,
+  q: DepartmentCoursesQuery
+): Promise<{ semester: Semester; department: string; courses: CourseOffering[] }> {
+  let page = await openProgram(client, PROGRAMS.courseSearch);
+  const options = page
+    .$('select[name="Q_FACULTY_CODE"] option')
+    .map((_, o) => ({ code: page.$(o).attr("value") ?? "", name: clean(page.$(o).text()).replace(/^[0-9A-Z]{4}-/, "") }))
+    .get()
+    .filter((o) => o.code);
+  const want = q.department.trim();
+  let matches = options.filter((o) => o.code.toUpperCase() === want.toUpperCase() || o.name === want);
+  if (!matches.length) matches = options.filter((o) => o.name.includes(want));
+  if (!matches.length) throw new AisError(`找不到開課系所「${want}」`, "NOT_FOUND");
+  if (matches.length > 1) {
+    const list = matches.slice(0, 20).map((o) => `${o.code} ${o.name}`).join("、");
+    throw new AisError(`「${want}」對應到多個系所，請指定：${list}`, "AMBIGUOUS");
+  }
+  const dept = matches[0];
+
+  const current = page.$('input[name="Q_AYEARSMS"]').attr("value") ?? "";
+  const { year, term } = splitSemester(q.semester ?? current);
+  const semester = `${year}${term}`;
+  const base = {
+    Q_AYEAR: year.padStart(3, "0"),
+    Q_SMS: term,
+    // 學制保持「全部」：先選學制會讓系所條件失效
+    Q_DEGREE_CODE: "",
+    Q_FACULTY_CODE: dept.code,
+    Q_GRADE: q.grade ? String(q.grade) : "",
+    Q_CLASSID: q.className?.trim().toUpperCase() ?? "",
+    QUERY_TYPE: "1",
+    hdnSelectedTab: "0",
+    "PC$PageSize": "200",
+    "PC2$PageSize": "200",
+  };
+  page = await submit(client, page, { ...base, QUERY_BTN1: "查詢" });
+  const rows = parseGrid(page.$).rows;
+  const pages = Math.min(readPaging(page.$).totalPages ?? 1, 10);
+  for (let n = 2; n <= pages; n++) {
+    page = await submit(client, page, {
+      ...base,
+      "PC$PageNo": String(n),
+      "PC2$PageNo": String(n),
+      ActivePageControl: "PC",
+      QUERY_TYPE: "1",
+      __EVENTTARGET: "ReQuery",
+      __EVENTARGUMENT: "",
+    });
+    rows.push(...parseGrid(page.$).rows);
+  }
+  // 學院層級的課程不受學期條件限制，會混進其他學期的資料，這裡再依學期過濾
+  const courses = rows.map(toOffering).filter((c) => c.semester === semester);
+  return { semester, department: `${dept.code} ${dept.name}`, courses };
 }
 
 /** 依課號（與班別）找課綱。同一課號有多個班時要指定 className，例如「3年A班」或「3A」 */

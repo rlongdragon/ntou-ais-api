@@ -235,6 +235,11 @@ export class AisClient {
     return features.syllabus(this, pkno);
   }
 
+  /** 依開課系所（與年級、班別）列出某學年期的所有課 */
+  departmentCourses(query: features.DepartmentCoursesQuery) {
+    return features.departmentCourses(this, query);
+  }
+
   /** 依課號（與班別）找課綱 */
   syllabusByCode(code: string, opts?: { semester?: features.Semester; className?: string }) {
     return features.syllabusByCode(this, code, opts);

@@ -43,6 +43,7 @@ const { grades, totalCredits } = await ais.grades(); // 歷年成績
 | `creditTransfer()` | 抵免申請的審核結果；沒有申請過時 `applied` 為 `false` |
 | `graduation()` | 畢業資格：各類應修學分、必修科目對照、學分統計表、教務處初審／複審結果 |
 | `searchCourses({ keyword, by?, exact?, semester?, page?, pageSize? })` | 依課名、課號或教師查詢開課資料 |
+| `departmentCourses({ department, grade?, className?, semester? })` | 依開課系所（名稱或代碼）與年級、班別列出某學年期的所有課 |
 | `syllabus(pkno)` | 課綱，`pkno` 來自 `timetable()` 的 `slots` |
 | `syllabusByCode(code, { semester?, className? })` | 依課號（與班別）找課綱 |
 
