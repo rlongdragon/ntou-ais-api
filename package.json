@@ -1,0 +1,35 @@
+{
+  "name": "ntou-ais-api",
+  "version": "1.0.0",
+  "description": "Client library for NTOU AIS (ais.ntou.edu.tw)",
+  "main": "dist/index.js",
+  "directories": {
+    "example": "example"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc"
+  },
+  "keywords": [],
+  "author": "rlongdragon",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "onnxruntime-node": "^1.30.0",
+    "sharp": "^0.35.5",
+    "tough-cookie": "^6.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  },
+  "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "models"
+  ]
+}
