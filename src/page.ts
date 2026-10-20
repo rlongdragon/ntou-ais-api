@@ -38,12 +38,12 @@ export async function submit(
   client: AisClient,
   page: Page,
   fields: Record<string, string>,
-  opts: { timeoutMs?: number } = {}
+  opts: { timeoutMs?: number; retry?: boolean } = {}
 ): Promise<Page> {
   const form = serializeForm(page.$);
   for (const [k, v] of Object.entries(fields)) form.set(k, v);
   const action = new URL(page.$("form").first().attr("action") ?? page.url, page.url).href;
-  const res = await client.get(action, { form, referer: page.url, timeoutMs: opts.timeoutMs ?? 60_000 });
+  const res = await client.get(action, { form, referer: page.url, timeoutMs: opts.timeoutMs ?? 60_000, retry: opts.retry });
   return toPage(res.url, res.text);
 }
 

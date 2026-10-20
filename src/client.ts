@@ -230,6 +230,21 @@ export class AisClient {
     return features.creditTransfer(this);
   }
 
+  /** 本期的課程問卷與是否已填 */
+  courseSurveys() {
+    return features.courseSurveys(this);
+  }
+
+  /** 某門課問卷的題目（只讀取） */
+  getSurvey(code: string, teacher?: string) {
+    return features.getSurvey(this, code, teacher);
+  }
+
+  /** 送出課程問卷；每份只能填一次，送出後無法修改 */
+  submitSurvey(code: string, answers: features.SurveyAnswer[], opts?: { teacher?: string }) {
+    return features.submitSurvey(this, code, answers, opts);
+  }
+
   /** 課綱，pkno 來自 timetable() 的 slots */
   syllabus(pkno: string) {
     return features.syllabus(this, pkno);

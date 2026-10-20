@@ -1,7 +1,7 @@
 import type { AisClient } from "./client.js";
 import { AisError } from "./http.js";
-import { clean, load, type Doc } from "./form.js";
-import { openDetail, openProgram, parseGrid, readFields, readPaging, rowsOf, submit, type Grid } from "./page.js";
+import { alertMessage, clean, load, type Doc } from "./form.js";
+import { openDetail, openProgram, parseGrid, readFields, readPaging, rowsOf, submit, type Grid, type Page } from "./page.js";
 
 // 各功能的 loader 網址（來自 AIS 選單）
 export const PROGRAMS = {
@@ -623,4 +623,189 @@ export async function creditTransfer(client: AisClient): Promise<CreditTransfer>
     throw e;
   }
   return { applied: true, fields: readFields(page.$), records: withoutIdentity(parseGrid(page.$)) };
+}
+
+// ── 課程問卷（教學評鑑） ──────────────────────────────
+
+const SURVEY_LIST = "Application/CET/CET20/CET2020_.aspx?progcd=CET2020";
+
+export interface CourseSurvey {
+  /** 已經填過（AIS 會保留在清單上，但拿掉填寫連結） */
+  filled: boolean;
+  /** 問卷名稱，例如「期中教學評鑑」 */
+  survey: string;
+  code: string;
+  title: string;
+  type: string;
+  credits: number | null;
+  teacher: string;
+}
+
+export interface SurveyQuestion {
+  /** 題號 */
+  number: number;
+  /** 所屬題組，例如「教學目標與內容」 */
+  section: string;
+  text: string;
+  required: boolean;
+  kind: "choice" | "text";
+  /** 選擇題的選項，依畫面順序；作答時用 1 起算的序號 */
+  options: string[];
+}
+
+/** 本期的課程問卷與是否已填；不在填寫期間時 open 為 false */
+export async function courseSurveys(client: AisClient): Promise<{ open: boolean; message?: string; surveys: CourseSurvey[] }> {
+  let page;
+  try {
+    page = await openProgram(client, SURVEY_LIST);
+  } catch (e) {
+    if (e instanceof AisError && e.code === "AIS_NOTICE") return { open: false, message: e.message, surveys: [] };
+    throw e;
+  }
+  const notice = alertMessage(page.html);
+  if (notice && /非教學評鑑期間/.test(notice)) return { open: false, message: notice, surveys: [] };
+  const links = page.$("#DataGrid tr")
+    .slice(1)
+    .map((_, tr) => /doEdit1_2\(/.test(page.$(tr).html() ?? ""))
+    .get();
+  const surveys = parseGrid(page.$).rows.map((r, i) => ({
+    filled: !links[i],
+    survey: r["問卷名稱"] ?? "",
+    code: r["課號"] ?? "",
+    title: r["中文課名"] ?? "",
+    type: r["選別"] ?? "",
+    credits: num(r["學分"]),
+    teacher: r["待評鑑教師"] ?? "",
+  }));
+  return { open: true, surveys };
+}
+
+/** 開啟某門課（與教師）的問卷填寫頁 */
+async function openSurveyForm(client: AisClient, code: string, teacher?: string): Promise<Page> {
+  const list = await openProgram(client, SURVEY_LIST);
+  const rows = list.$("#DataGrid tr").slice(1).toArray();
+  const match = rows.filter((tr) => {
+    const t = list.$(tr).children("td").toArray().map((c) => clean(list.$(c).text()));
+    return t[1]?.toUpperCase() === code.trim().toUpperCase() && (!teacher || t[6]?.includes(teacher.trim()));
+  });
+  if (!match.length) throw new AisError(`問卷清單裡沒有課號 ${code}${teacher ? `（${teacher}）` : ""}`, "NOT_FOUND");
+  if (match.length > 1) {
+    const names = match.map((tr) => clean(list.$(tr).children("td").eq(6).text())).join("、");
+    throw new AisError(`課號 ${code} 有多位待評鑑教師，請指定教師：${names}`, "AMBIGUOUS");
+  }
+  if (!/doEdit1_2\(/.test(list.$(match[0]).html() ?? "")) {
+    throw new AisError(`${code} 的問卷已經填過，每份只能填一次`, "ALREADY_FILLED");
+  }
+  const call = /doEdit1_2\(this,\s*(?:'|&#39;)([^'&]*)(?:'|&#39;),\s*(?:'|&#39;)(\w+)/.exec(list.$(match[0]).html() ?? "");
+  const view = /var\s+viewpage\s*=\s*"([^"]+)"/.exec(list.html)?.[1];
+  if (!call || !view) throw new AisError("問卷清單格式已變更，找不到填寫連結", "PAGE_CHANGED");
+  const form = new URLSearchParams({ Mode: call[2].toUpperCase() });
+  const keys = call[1].split("|");
+  for (let i = 0; i + 1 < keys.length; i += 2) form.set(keys[i], keys[i + 1]);
+  const url = new URL(view, list.url).href;
+  // 寫入流程中不要自動重試，避免重複送出
+  const res = await client.get(url, { form, referer: list.url, retry: false });
+  const page = { url: res.url, html: res.text, $: load(res.text) };
+  if (!page.$('input[name="SAVE_BTN1"]').length) {
+    throw new AisError(`無法開啟 ${code} 的問卷${alertMessage(res.text) ? `：${alertMessage(res.text)}` : ""}`, "PAGE_CHANGED");
+  }
+  return page;
+}
+
+interface ParsedQuestion extends SurveyQuestion {
+  field: string;
+  values: string[];
+}
+
+function parseSurveyForm($: Doc): ParsedQuestion[] {
+  const out: ParsedQuestion[] = [];
+  let section = "";
+  $("#DataListItem").find("span[id$=_SUBJECT_TITLE]").each((_, el) => {
+    const prefix = ($(el).attr("id") ?? "").replace(/_SUBJECT_TITLE$/, "");
+    const sec = clean($(`#${prefix}_VECTOR_NAME`).text());
+    if (sec) section = sec;
+    const cell = $(el).closest("td");
+    const radios = cell.find("input[type=radio], input[type=checkbox]").toArray();
+    const textarea = cell.find("textarea").first();
+    const field = radios.length ? $(radios[0]).attr("name") ?? "" : textarea.attr("name") ?? "";
+    if (!field) return;
+    out.push({
+      number: Number(clean($(el).text()).replace(/\.$/, "")),
+      section,
+      text: clean($(`#${prefix}_SUBJECT_CONTENT`).text()),
+      required: clean($(`#${prefix}_IS_FILL`).text()) === "*",
+      kind: radios.length ? "choice" : "text",
+      options: radios.map((r) => clean($(`label[for="${$(r).attr("id")}"]`).text())),
+      field,
+      values: radios.map((r) => $(r).attr("value") ?? ""),
+    });
+  });
+  return out;
+}
+
+/** 某門課問卷的題目（只讀取，不會送出） */
+export async function getSurvey(client: AisClient, code: string, teacher?: string): Promise<{ code: string; title: string; questions: SurveyQuestion[] }> {
+  const page = await openSurveyForm(client, code, teacher);
+  const title = clean(page.$("form").text()).match(/課程名稱：【[^】]+】(\S+)/)?.[1] ?? "";
+  return { code, title, questions: parseSurveyForm(page.$).map(({ field, values, ...q }) => q) };
+}
+
+export interface SurveyAnswer {
+  /** 題號 */
+  question: number;
+  /** 選擇題：選項序號，1 起算（依 getSurvey 的 options 順序） */
+  choice?: number;
+  /** 文字題的內容 */
+  text?: string;
+}
+
+/**
+ * 送出某門課的問卷。每份問卷只能填一次，送出後無法修改。
+ * AIS 的流程是先按「送出問卷」，頁面再要求確認（RealAdd）才真正存檔；
+ * 第一步的回應不是預期的確認流程時會停下來，不會送出。
+ */
+export async function submitSurvey(
+  client: AisClient,
+  code: string,
+  answers: SurveyAnswer[],
+  opts: { teacher?: string } = {}
+): Promise<{ submitted: true; message?: string }> {
+  const page = await openSurveyForm(client, code, opts.teacher);
+  const questions = parseSurveyForm(page.$);
+  const fill: Record<string, string> = {};
+  for (const a of answers) {
+    const q = questions.find((x) => x.number === a.question);
+    if (!q) throw new AisError(`問卷沒有第 ${a.question} 題`, "BAD_ARGUMENT");
+    if (q.kind === "choice") {
+      if (!a.choice || a.choice < 1 || a.choice > q.values.length) {
+        throw new AisError(`第 ${q.number} 題要用 choice 選 1–${q.values.length}：${q.options.join("／")}`, "BAD_ARGUMENT");
+      }
+      fill[q.field] = q.values[a.choice - 1];
+    } else {
+      fill[q.field] = a.text ?? "";
+    }
+  }
+  const missing = questions.filter((q) => q.required && !(q.field in fill)).map((q) => q.number);
+  if (missing.length) throw new AisError(`必填題沒有作答：第 ${missing.join("、")} 題`, "BAD_ARGUMENT");
+
+  // 寫入流程：session 過期時不自動重登重送
+  const first = await submit(client, page, { ...fill, SAVE_BTN1: "送出問卷" }, { retry: false });
+  const firstAlert = alertMessage(first.html);
+  // 「送出問卷」只做檢查，AIS 回傳的頁面會呼叫 checkDoAdd() 要求確認，確認後才 postback RealAdd 存檔
+  const asksConfirm = (first.html.match(/checkDoAdd\(\)/g) ?? []).length > 1;
+  if (!asksConfirm) {
+    throw new AisError(`AIS 沒有進入確認送出的步驟${firstAlert ? `：${firstAlert}` : ""}；已停止，請到 AIS 確認這份問卷的狀態`, "SURVEY_NOT_CONFIRMED");
+  }
+  const second = await submit(client, first, { ...fill, __EVENTTARGET: "RealAdd", __EVENTARGUMENT: "" }, { retry: false });
+  const message = alertMessage(second.html);
+
+  // 填過的問卷仍留在清單上，只是填寫連結被拿掉
+  const after = await courseSurveys(client);
+  const row = after.surveys.find(
+    (s) => s.code.toUpperCase() === code.trim().toUpperCase() && (!opts.teacher || s.teacher.includes(opts.teacher.trim()))
+  );
+  if (!row?.filled) {
+    throw new AisError(`送出後這份問卷仍顯示未填${message ? `（AIS：${message}）` : ""}，請到 AIS 確認`, "SURVEY_NOT_SAVED");
+  }
+  return { submitted: true, message };
 }

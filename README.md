@@ -1,6 +1,6 @@
 # ntou-ais-api
 
-國立臺灣海洋大學教學務系統 AIS（`https://ais.ntou.edu.tw`）的非官方 Node.js client。用學號、密碼登入（驗證碼在本機自動辨識），查詢課表、成績、成績預警、缺曠、請假、獎懲與操行、獎助學金、抵免、畢業資格、開課資料與課綱。
+國立臺灣海洋大學教學務系統 AIS（`https://ais.ntou.edu.tw`）的非官方 Node.js client。用學號、密碼登入（驗證碼在本機自動辨識），查詢課表、成績、成績預警、缺曠、請假、獎懲與操行、獎助學金、抵免、畢業資格、開課資料與課綱，以及填寫課程問卷（教學評鑑）。
 
 > 本專案不是海大官方的工具，也未受其委託或背書。AIS 改版時部分功能可能暫時失效。請只用來查詢自己的資料，並避免高頻率存取學校的系統。
 
@@ -44,6 +44,9 @@ const { grades, totalCredits } = await ais.grades(); // 歷年成績
 | `graduation()` | 畢業資格：各類應修學分、必修科目對照、學分統計表、教務處初審／複審結果 |
 | `searchCourses({ keyword, by?, exact?, semester?, page?, pageSize? })` | 依課名、課號或教師查詢開課資料 |
 | `departmentCourses({ department, grade?, className?, semester? })` | 依開課系所（名稱或代碼）與年級、班別列出某學年期的所有課 |
+| `courseSurveys()` | 本期課程問卷（教學評鑑）與是否已填；不在填寫期間時 `open` 為 `false` |
+| `getSurvey(code, teacher?)` | 某門課問卷的題目與選項（只讀取） |
+| `submitSurvey(code, answers, { teacher? })` | 送出課程問卷。**每份只能填一次，送出後無法修改** |
 | `syllabus(pkno)` | 課綱，`pkno` 來自 `timetable()` 的 `slots` |
 | `syllabusByCode(code, { semester?, className? })` | 依課號（與班別）找課綱 |
 
@@ -56,6 +59,18 @@ AIS 的學年期寫成學年加學期，例如 `1151` 是 115 學年度第 1 學
 ### 畢業資格
 
 `graduation()` 回傳的「已得學分」等欄位來自教務處的審查結果，還沒審查時都是 0，不代表實際修課進度。要估算進度，請用 `grades()` 對照必修科目表。
+
+### 課程問卷
+
+```js
+const { questions } = await ais.getSurvey("B570332J");
+await ais.submitSurvey("B570332J", [
+  { question: 1, choice: 1 }, // 選項序號 1 起算，依 questions[].options 的順序
+  { question: 7, text: "沒有" },
+]);
+```
+
+AIS 的流程是先按「送出問卷」，頁面再跳出確認，確認後（`RealAdd` postback）才真正存檔。`submitSurvey` 會檢查第一步是否進入確認流程，不是的話就停下來不送；送出後再確認清單上這門課已經沒有填寫連結（AIS 會把填過的問卷留在清單上，只拿掉連結）。寫入過程中 session 過期不會自動重送。
 
 ### 保存登入狀態
 
