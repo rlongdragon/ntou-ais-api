@@ -1,23 +1,27 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import * as ort from "onnxruntime-node";
-import sharp from "sharp";
+import type * as Ort from "onnxruntime-node";
+import type Sharp from "sharp";
 
 // ddddocr 的 common_old 模型（https://github.com/sml2h3/ddddocr，MIT）
 const MODEL_PATH = fileURLToPath(new URL("../models/common_old.onnx", import.meta.url));
 const CHARSET_PATH = fileURLToPath(new URL("../models/common_old_charset.json", import.meta.url));
 const HEIGHT = 64;
 
-let loading: Promise<{ session: ort.InferenceSession; charset: string[] }> | undefined;
+let loading:
+  | Promise<{ ort: typeof Ort; sharp: typeof Sharp; session: Ort.InferenceSession; charset: string[] }>
+  | undefined;
 
+// onnxruntime 與 sharp 載入就要 40MB 左右，只有登入要解驗證碼時才用到，第一次辨識時才載入
 function load() {
   loading ??= (async () => {
+    const [ort, { default: sharp }] = await Promise.all([import("onnxruntime-node"), import("sharp")]);
     const [session, charset] = await Promise.all([
       // 模型宣告的輸出 shape 跟實際不同，onnxruntime 每次都會警告，關掉 warning
       ort.InferenceSession.create(MODEL_PATH, { logSeverityLevel: 3 }),
       readFile(CHARSET_PATH, "utf8").then((s) => JSON.parse(s) as string[]),
     ]);
-    return { session, charset };
+    return { ort, sharp, session, charset };
   })().catch((e) => {
     loading = undefined;
     throw e;
@@ -32,7 +36,7 @@ export interface OcrOptions {
 
 /** 辨識驗證碼圖片，回傳模型輸出的原始文字 */
 export async function recognize(image: Uint8Array, opts: OcrOptions = {}): Promise<string> {
-  const { session, charset } = await load();
+  const { ort, sharp, session, charset } = await load();
   let img = sharp(image);
   if (opts.flattenWhite ?? true) img = img.flatten({ background: "#ffffff" });
   const meta = await sharp(image).metadata();
