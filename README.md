@@ -39,6 +39,7 @@ const { grades, totalCredits } = await ais.grades(); // 歷年成績
 | `conduct()` | 目前操行成績與獎懲紀錄 |
 | `earlyWarnings()` | 本學期各科成績預警 |
 | `leaves()` | 請假紀錄與各層審核狀態 |
+| `leaveCertificate(leaveNo)` | 假單的「學生請假證明聯」PDF（`{ filename, data }`），`leaveNo` 是 `leaves()` 的假單序號 |
 | `scholarships(semester?)` | 某學年期的獎助學金申請紀錄，預設為目前學年期 |
 | `creditTransfer()` | 抵免申請的審核結果；沒有申請過時 `applied` 為 `false` |
 | `graduation()` | 畢業資格：各類應修學分、必修科目對照、學分統計表、教務處初審／複審結果 |

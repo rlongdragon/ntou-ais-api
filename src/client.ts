@@ -220,6 +220,11 @@ export class AisClient {
     return features.leaves(this);
   }
 
+  /** 假單的「學生請假證明聯」PDF */
+  leaveCertificate(leaveNo: string) {
+    return features.leaveCertificate(this, leaveNo);
+  }
+
   /** 獎助學金申請紀錄，預設為目前學年期 */
   scholarships(semester?: features.Semester) {
     return features.scholarships(this, semester);

@@ -809,3 +809,25 @@ export async function submitSurvey(
   }
   return { submitted: true, message };
 }
+
+// ── 請假證明聯 ────────────────────────────────────────
+
+/** 某張假單的「學生請假證明聯」PDF；leaveNo 是假單序號，例如 1151D00136（leaves() 的「假單序號」） */
+export async function leaveCertificate(client: AisClient, leaveNo: string): Promise<{ filename: string; data: Uint8Array }> {
+  const no = leaveNo.trim().replace(/^S-/i, "").toUpperCase();
+  if (!/^\d{3,4}[A-Z]\d{4,6}$/.test(no)) throw new AisError(`假單序號格式不對：${leaveNo}`, "BAD_ARGUMENT");
+  // 先開列印頁，建立這個功能的頁面狀態
+  const page = await openProgram(client, "Application/SEC/SEC20/SEC2090_.aspx?progcd=SEC2090");
+  const res = await client.get(`Application/SEC/SEC20/SEC2090_02.aspx?TYPE=PRINT&APP_NO=${encodeURIComponent(no)}`, {
+    form: new URLSearchParams(),
+    referer: page.url,
+    accept: "application/pdf,*/*",
+    timeoutMs: 90_000,
+  });
+  const isPdf = /pdf/i.test(res.headers.get("content-type") ?? "") && new TextDecoder().decode(res.body.slice(0, 5)) === "%PDF-";
+  if (!isPdf) {
+    const message = alertMessage(res.text);
+    throw new AisError(`AIS 沒有產生 ${no} 的請假證明${message ? `：${message}` : ""}`, "NOT_FOUND");
+  }
+  return { filename: `請假證明_${no}.pdf`, data: res.body };
+}
